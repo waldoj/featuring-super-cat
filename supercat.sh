@@ -29,7 +29,7 @@ DURATION_OF_SILENCE=7
 SUPERCAT_MP3="supercat.mp3"
 # Output file name
 BASE_FILENAME="${INPUT_MP3%.*}"
-OUTPUT_MP4="$BASE_FILENAME (Feat. Supercat).mp4"
+OUTPUT_MP4="$BASE_FILENAME (Feat. Super Cat).mp4"
 
 # Generate silence.mp3 of specified duration
 ffmpeg -f lavfi -i anullsrc=r=44100:cl=stereo -t $DURATION_OF_SILENCE -q:a 9 -acodec libmp3lame /tmp/silence.mp3
@@ -47,6 +47,5 @@ ffmpeg -i "$INPUT_MP3" -an -vcodec copy /tmp/cover.jpg
 ffmpeg -y -i /tmp/cover.jpg -i overlay.png -filter_complex "overlay=W-w-10:H-h-10" /tmp/cover.jpg
 
 # Truncate song at 30 seconds, fading it out at the end, and add cover art
-ffmpeg -loop 1 -framerate 2 -i /tmp/cover.jpg -i /tmp/temp_input.mp3 -filter_complex "[1:a]afade=t=out:st=28:d=2,atrim=duration=30[audio]" -map 0:v -map "[audio]" -c:v libx264 -t 30 -pix_fmt yuv420p -c:a aac "$OUTPUT_MP4"
 
 echo "Created $OUTPUT_MP4"
