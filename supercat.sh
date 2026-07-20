@@ -54,7 +54,6 @@ ffmpeg -i /tmp/temp_input_with_silence.mp3 -i $SUPERCAT_MP3 -filter_complex "[0:
 ffmpeg -y -i "$INPUT_MP3" -an -frames:v 1 /tmp/cover.jpg
 
 sips -z 750 750 /tmp/cover.jpg
-cp /tmp/cover.jpg ~/Desktop/
 
 # Add a "Featuring Supercat" overlay
 ffmpeg -y -i /tmp/cover.jpg -i overlay.png -filter_complex "overlay=W-w-10:H-h-10" /tmp/cover.jpg
