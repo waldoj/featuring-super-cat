@@ -40,8 +40,9 @@ ffmpeg -i "concat:/tmp/silence.mp3|$INPUT_MP3" -acodec copy /tmp/temp_input_with
 # Combine the modified input MP3 with the second MP3
 ffmpeg -i /tmp/temp_input_with_silence.mp3 -i $SUPERCAT_MP3 -filter_complex "[0:a][1:a]amix=inputs=2:duration=longest" /tmp/temp_input.mp3
 
-# Save the cover art from the input MP3
-ffmpeg -i "$INPUT_MP3" -an -vcodec copy /tmp/cover.jpg
+# Save the cover art from the input MP3, re-encoding rather than copying, since
+# embedded art may be PNG (common in M4A files) instead of JPEG
+ffmpeg -y -i "$INPUT_MP3" -an -frames:v 1 /tmp/cover.jpg
 
 sips -z 750 750 /tmp/cover.jpg
 cp /tmp/cover.jpg ~/Desktop/
