@@ -21,6 +21,13 @@ if [ ! -f "$1" ]; then
     exit 1
 fi
 
+# The cover art becomes the video, so there's nothing to make without it. Check
+# up front, rather than failing partway through with a cryptic ffmpeg error.
+if ! ffprobe -v error -select_streams v -show_entries stream=codec_name -of csv=p=0 "$1" | grep -q .; then
+    echo "$1 has no cover art"
+    exit 1
+fi
+
 # Input MP3 file from the command line argument
 INPUT_MP3="$1"
 # Duration of silence to prepend (in seconds)
