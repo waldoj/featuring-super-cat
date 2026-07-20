@@ -34,8 +34,10 @@ OUTPUT_MP4="$BASE_FILENAME (Feat. Super Cat).mp4"
 # Generate silence.mp3 of specified duration
 ffmpeg -f lavfi -i anullsrc=r=44100:cl=stereo -t $DURATION_OF_SILENCE -q:a 9 -acodec libmp3lame /tmp/silence.mp3
 
-# Concatenate silence with the input MP3
-ffmpeg -i "concat:/tmp/silence.mp3|$INPUT_MP3" -acodec copy /tmp/temp_input_with_silence.mp3
+# Concatenate silence with the input MP3, decoding both first so that the input
+# can be any format, not just a raw MPEG audio stream
+ffmpeg -i /tmp/silence.mp3 -i "$INPUT_MP3" -filter_complex \
+    "[0:a][1:a]concat=n=2:v=0:a=1[aout]" -map "[aout]" /tmp/temp_input_with_silence.mp3
 
 # Combine the modified input MP3 with the second MP3
 ffmpeg -i /tmp/temp_input_with_silence.mp3 -i $SUPERCAT_MP3 -filter_complex "[0:a][1:a]amix=inputs=2:duration=longest" /tmp/temp_input.mp3
