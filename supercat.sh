@@ -49,6 +49,8 @@ cp /tmp/cover.jpg ~/Desktop/
 # Add a "Featuring Supercat" overlay
 ffmpeg -y -i /tmp/cover.jpg -i overlay.png -filter_complex "overlay=W-w-10:H-h-10" /tmp/cover.jpg
 
-# Truncate song at 30 seconds, fading it out at the end, and add cover art
+# Truncate song at 30 seconds, fading it out at the end, and add cover art.
+# Audio is mono at 128 kbps.
+ffmpeg -y -loop 1 -framerate 2 -i /tmp/cover.jpg -i /tmp/temp_input.mp3 -filter_complex "[1:a]afade=t=out:st=28:d=2,atrim=duration=30[audio]" -map 0:v -map "[audio]" -c:v libx264 -t 30 -pix_fmt yuv420p -c:a aac -b:a 128k -ac 1 "$OUTPUT_MP4"
 
 echo "Created $OUTPUT_MP4"
