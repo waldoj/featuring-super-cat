@@ -31,7 +31,7 @@ fi
 # Input MP3 file from the command line argument
 INPUT_MP3="$1"
 # Duration of silence to prepend (in seconds)
-DURATION_OF_SILENCE=7
+DURATION_OF_SILENCE=5
 # Name of the file to combine with
 SUPERCAT_MP3="supercat.mp3"
 # Output file name
