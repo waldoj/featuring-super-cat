@@ -44,10 +44,10 @@ ffmpeg -y -nostdin -f lavfi -i anullsrc=r=44100:cl=stereo -t $DURATION_OF_SILENC
 # Concatenate silence with the input MP3, decoding both first so that the input
 # can be any format, not just a raw MPEG audio stream
 ffmpeg -y -nostdin -i /tmp/silence.mp3 -i "$INPUT_MP3" -filter_complex \
-    "[0:a][1:a]concat=n=2:v=0:a=1[aout]" -map "[aout]" /tmp/temp_input_with_silence.mp3
+    "[0:a][1:a]concat=n=2:v=0:a=1,aresample=44100[aout]" -map "[aout]" /tmp/temp_input_with_silence.mp3
 
 # Combine the modified input MP3 with the second MP3
-ffmpeg -y -nostdin -i /tmp/temp_input_with_silence.mp3 -i $SUPERCAT_MP3 -filter_complex "[0:a][1:a]amix=inputs=2:duration=longest" /tmp/temp_input.mp3
+ffmpeg -y -nostdin -i /tmp/temp_input_with_silence.mp3 -i $SUPERCAT_MP3 -filter_complex "[0:a][1:a]amix=inputs=2:duration=longest,aresample=44100" /tmp/temp_input.mp3
 
 # Save the cover art from the input MP3, re-encoding rather than copying, since
 # embedded art may be PNG (common in M4A files) instead of JPEG
