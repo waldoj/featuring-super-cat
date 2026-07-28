@@ -2,3 +2,7 @@
 .DS_Store
 Overlay.pxm
 /songs
+
+# Runtime state, rebuilt as needed
+/files.txt
+/history.txt
