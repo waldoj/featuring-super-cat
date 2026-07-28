@@ -180,7 +180,6 @@ function await_bluesky_video {
         attempt=$(( attempt + 1 ))
 
         job_json=$(curl -s -f \
-            -H "Authorization: Bearer ${ACCESS_JWT}" \
             "https://video.bsky.app/xrpc/app.bsky.video.getJobStatus?jobId=${job_id}") || return 1
 
         state=$(printf '%s' "$job_json" | jq -r '.jobStatus.state // empty')
@@ -274,11 +273,22 @@ if [ -z "$BLUESKY_DID" ]; then
     exit_error "Bluesky login didn’t return a DID."
 fi
 
-# Video uploads need a service auth token for the video host, rather than the
-# ordinary session token
+# Video uploads need a service auth token rather than the ordinary session
+# token. The token's audience has to be the account's own PDS — not the video
+# host — so look that up in the DID document.
+PDS_HOST=$(curl -s -f "https://plc.directory/${BLUESKY_DID}" \
+    | jq -r '.service[] | select(.id == "#atproto_pds") | .serviceEndpoint' \
+    | sed -e 's#^https://##' -e 's#/$##') \
+    || exit_error "Could not resolve the Bluesky PDS host."
+
+if [ -z "$PDS_HOST" ]; then
+    exit_error "DID document didn’t list a PDS endpoint."
+fi
+
+# The lexicon method is uploadBlob, even though the call goes to uploadVideo
 SERVICE_JSON=$(curl -s -f \
     -H "Authorization: Bearer ${ACCESS_JWT}" \
-    "https://bsky.social/xrpc/com.atproto.server.getServiceAuth?aud=did:web:video.bsky.app&lxm=app.bsky.video.uploadVideo") \
+    "https://bsky.social/xrpc/com.atproto.server.getServiceAuth?aud=did:web:${PDS_HOST}&lxm=com.atproto.repo.uploadBlob") \
     || exit_error "Could not get a Bluesky service token."
 
 SERVICE_JWT=$(printf '%s' "$SERVICE_JSON" | jq -r '.token // empty')
@@ -287,17 +297,19 @@ if [ -z "$SERVICE_JWT" ]; then
 fi
 
 # Upload the video to Bluesky, which queues a transcoding job rather than
-# returning a blob directly
-JOB_JSON=$(curl -s -f -X POST \
+# returning a blob directly. Keep the response body on failure: this endpoint
+# explains auth problems in the body, which -f would discard.
+JOB_JSON=$(curl -s -X POST \
     "https://video.bsky.app/xrpc/app.bsky.video.uploadVideo?did=${BLUESKY_DID}&name=$(jq -rn --arg n "$ENTRY" '$n|@uri')" \
     -H "Authorization: Bearer ${SERVICE_JWT}" \
     -H "Content-Type: video/mp4" \
     --data-binary "@${ENTRY}") \
     || exit_error "Video upload to Bluesky failed."
 
-JOB_ID=$(printf '%s' "$JOB_JSON" | jq -r '.jobStatus.jobId // empty')
+# A successful upload reports the job at the top level, not under jobStatus
+JOB_ID=$(printf '%s' "$JOB_JSON" | jq -r '.jobId // .jobStatus.jobId // empty')
 if [ -z "$JOB_ID" ]; then
-    exit_error "Bluesky upload didn’t return a job ID."
+    exit_error "Bluesky upload didn’t return a job ID: $JOB_JSON"
 fi
 
 # Wait for transcoding to finish, which yields the blob to embed
