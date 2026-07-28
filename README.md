@@ -33,6 +33,16 @@ to have cover art embedded, since that art becomes the video.
 5. Stamps `overlay.png` into the bottom right corner, as a sticker.
 6. Renders a 30-second MP4 pairing that still image with the mixed audio,
    fading out over the last two seconds.
+7. Copies the song's title and artist into the MP4's own metadata, so the
+   credit travels with the file:
+
+   ```sh
+   ffprobe -v error -show_entries format_tags=title,artist,comment \
+       -of default=noprint_wrappers=1 "your_song (Feat. Super Cat).mp4"
+   ```
+
+   If the source has no title or artist tags, the title falls back to the
+   filename.
 
 Intermediate files live in `/tmp` and are cleaned up on exit.
 

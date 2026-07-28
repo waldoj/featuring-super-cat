@@ -30,6 +30,10 @@ fi
 
 # Input MP3 file from the command line argument
 INPUT_MP3="$1"
+# The song's own title and artist, carried into the MP4 so that anything
+# downstream can credit the track without parsing the filename
+INPUT_TITLE=$(ffprobe -v error -show_entries format_tags=title -of default=nw=1:nk=1 "$INPUT_MP3")
+INPUT_ARTIST=$(ffprobe -v error -show_entries format_tags=artist -of default=nw=1:nk=1 "$INPUT_MP3")
 # Duration of silence to prepend (in seconds)
 DURATION_OF_SILENCE=5
 # Name of the file to combine with
@@ -37,6 +41,20 @@ SUPERCAT_MP3="supercat.mp3"
 # Output file name
 BASE_FILENAME="${INPUT_MP3%.*}"
 OUTPUT_MP4="$BASE_FILENAME (Feat. Super Cat).mp4"
+
+# Tags for the MP4. The title passes through untouched. Fall back to the
+# filename when the source has no title, so the output is never left untitled.
+if [ -n "$INPUT_TITLE" ]; then
+    OUTPUT_TITLE="$INPUT_TITLE"
+else
+    OUTPUT_TITLE="$(basename "$BASE_FILENAME")"
+fi
+
+if [ -n "$INPUT_ARTIST" ]; then
+    OUTPUT_COMMENT="$INPUT_TITLE by $INPUT_ARTIST, featuring Super Cat"
+else
+    OUTPUT_COMMENT="Featuring Super Cat"
+fi
 
 # Generate silence.mp3 of specified duration
 ffmpeg -y -nostdin -f lavfi -i anullsrc=r=44100:cl=stereo -t $DURATION_OF_SILENCE -q:a 9 -acodec libmp3lame /tmp/silence.mp3
@@ -60,6 +78,6 @@ ffmpeg -y -nostdin -i /tmp/cover.jpg -i overlay.png -filter_complex "overlay=W-w
 
 # Truncate song at 30 seconds, fading it out at the end, and add cover art.
 # Audio is mono at 128 kbps.
-ffmpeg -y -nostdin -loop 1 -framerate 2 -i /tmp/cover.jpg -i /tmp/temp_input.mp3 -filter_complex "[1:a]afade=t=out:st=28:d=2,atrim=duration=30[audio]" -map 0:v -map "[audio]" -c:v libx264 -t 30 -pix_fmt yuv420p -c:a aac -b:a 128k -ac 1 "$OUTPUT_MP4"
+ffmpeg -y -nostdin -loop 1 -framerate 2 -i /tmp/cover.jpg -i /tmp/temp_input.mp3 -filter_complex "[1:a]afade=t=out:st=28:d=2,atrim=duration=30[audio]" -map 0:v -map "[audio]" -metadata title="$OUTPUT_TITLE" -metadata artist="$INPUT_ARTIST" -metadata comment="$OUTPUT_COMMENT" -c:v libx264 -t 30 -pix_fmt yuv420p -c:a aac -b:a 128k -ac 1 "$OUTPUT_MP4"
 
 echo "Created $OUTPUT_MP4"
