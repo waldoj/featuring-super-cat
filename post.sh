@@ -203,7 +203,7 @@ function await_bluesky_video {
 cd "$(dirname "$0")" || exit
 
 # Make sure the tools this script depends on are actually present
-for command in aws curl jq; do
+for command in aws curl ffprobe jq; do
     if ! command -v "$command" > /dev/null; then
         exit_error "$command is required but not installed"
     fi
@@ -223,8 +223,23 @@ if ! get_video; then
     exit_error "Could not get video clip"
 fi
 
-# Describe the clip by name, minus the extension, so the post has alt text
-ALT_TEXT="${ENTRY%.mp4}"
+# Credit the track from the tags supercat.sh wrote into the clip, falling back
+# to the filename for older clips that predate those tags
+CLIP_TITLE=$(ffprobe -v error -show_entries format_tags=title -of default=nw=1:nk=1 "$ENTRY")
+CLIP_ARTIST=$(ffprobe -v error -show_entries format_tags=artist -of default=nw=1:nk=1 "$ENTRY")
+
+if [ -z "$CLIP_TITLE" ]; then
+    CLIP_TITLE="${ENTRY%.mp4}"
+fi
+
+if [ -n "$CLIP_ARTIST" ]; then
+    POST_TEXT="\"${CLIP_TITLE} (feat. Super Cat),\" by ${CLIP_ARTIST}"
+else
+    POST_TEXT="\"${CLIP_TITLE} (feat. Super Cat)\""
+fi
+
+# The same wording describes the video for anyone using a screen reader
+ALT_TEXT="$POST_TEXT"
 
 # Upload the video to Mastodon. The v2 endpoint returns 202 for video, meaning
 # the media was accepted but is still processing.
@@ -250,6 +265,7 @@ fi
 # Send the message to Mastodon
 curl -s -f -X POST "${MASTODON_SERVER}/api/v1/statuses" \
     -H "Authorization: Bearer ${MASTODON_TOKEN}" \
+    -F "status=${POST_TEXT}" \
     -F "media_ids[]=${MEDIA_ID}" > /dev/null \
     || exit_error "Posting message to Mastodon failed."
 
@@ -324,6 +340,7 @@ fi
 POST_BODY=$(jq -n \
     --arg repo "$BLUESKY_DID" \
     --arg created_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+    --arg text "$POST_TEXT" \
     --arg alt "$ALT_TEXT" \
     --argjson video "$VIDEO_BLOB" \
     --argjson width "$VIDEO_WIDTH" \
@@ -333,7 +350,7 @@ POST_BODY=$(jq -n \
         collection: "app.bsky.feed.post",
         record: {
             "$type": "app.bsky.feed.post",
-            text: "",
+            text: $text,
             createdAt: $created_at,
             embed: {
                 "$type": "app.bsky.embed.video",
