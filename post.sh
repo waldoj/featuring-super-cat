@@ -171,28 +171,28 @@ ALT_TEXT="$POST_TEXT"
 # Upload the video to Mastodon. The v2 endpoint returns 202 for video, meaning
 # the media was accepted but is still processing.
 MEDIA_ID=$(masto_upload_media "$ENTRY" "$ALT_TEXT") \
-    || exit_error "Video could not be uploaded to Mastodon"
+    || exit_error "Video could not be uploaded to Mastodon: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
 
 # Wait for the video to finish processing before attaching it to a status
 masto_await_media "$MEDIA_ID" \
-    || exit_error "Mastodon never finished processing the video"
+    || exit_error "Mastodon never finished processing the video: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
 
 # Send the message to Mastodon
 masto_post_status "$POST_TEXT" "$MEDIA_ID" > /dev/null \
-    || exit_error "Posting message to Mastodon failed."
+    || exit_error "Posting message to Mastodon failed: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
 
 log_info "posted to mastodon media_id=${MEDIA_ID}"
 
 # Login to Bluesky to get session token
 SESSION_JSON=$(bsky_create_session "$BLUESKY_HANDLE" "$BLUESKY_APP_PASSWORD") \
-    || exit_error "Bluesky login failed."
+    || exit_error "Bluesky login failed: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
 
 ACCESS_JWT=$(bsky_access_jwt "$SESSION_JSON")
 
 # The repo is the account's DID, which is not always the same as the handle
 BLUESKY_DID=$(bsky_did "$SESSION_JSON")
 if [ -z "$BLUESKY_DID" ]; then
-    exit_error "Bluesky login didn’t return a DID."
+    exit_error "Bluesky login didn’t return a DID: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
 fi
 
 # Video uploads need a service auth token rather than the ordinary session
@@ -206,16 +206,16 @@ PDS_HOST=$(bsky_pds_host_from_session "$SESSION_JSON") \
 # The lexicon method is uploadBlob, even though the call goes to uploadVideo
 SERVICE_JWT=$(bsky_service_auth "$ACCESS_JWT" "did:web:${PDS_HOST}" \
     "com.atproto.repo.uploadBlob") \
-    || exit_error "Could not get a Bluesky service token."
+    || exit_error "Could not get a Bluesky service token: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
 
 # Upload the video to Bluesky, which queues a transcoding job rather than
 # returning a blob directly
 JOB_ID=$(bsky_upload_video "$BLUESKY_DID" "$SERVICE_JWT" "$ENTRY" "$ENTRY") \
-    || exit_error "Video upload to Bluesky failed."
+    || exit_error "Video upload to Bluesky failed: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
 
 # Wait for transcoding to finish, which yields the blob to embed
 VIDEO_BLOB=$(bsky_await_video "$JOB_ID") \
-    || exit_error "Bluesky never finished processing the video."
+    || exit_error "Bluesky never finished processing the video: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
 
 if [ -z "$VIDEO_BLOB" ] || [ "$VIDEO_BLOB" = "null" ]; then
     exit_error "Bluesky returned an empty video blob."
@@ -244,7 +244,7 @@ RECORD=$(jq -n \
 
 # Post the status to Bluesky, with the uploaded video
 BLUESKY_RESPONSE=$(bsky_create_record "$BLUESKY_DID" "$ACCESS_JWT" "$RECORD") \
-    || exit_error "Bluesky post failed."
+    || exit_error "Bluesky post failed: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
 
 log_info "posted to bluesky uri=$(printf '%s' "$BLUESKY_RESPONSE" | jq -r '.uri // empty')"
 
