@@ -168,85 +168,104 @@ fi
 # The same wording describes the video for anyone using a screen reader
 ALT_TEXT="$POST_TEXT"
 
+# Mastodon and Bluesky are attempted independently: a failure on one platform
+# is logged and the other is still attempted, rather than the whole run dying
+# on whichever platform happens to be first. Each block sets its own MASTODON_
+# and BLUESKY_ vars to record what happened, and the script exits non-zero at
+# the end if either platform failed -- one Slack alert either way, but it no
+# longer costs a healthy platform its post.
+MASTODON_OK="no"
+BLUESKY_OK="no"
+
 # Upload the video to Mastodon. The v2 endpoint returns 202 for video, meaning
 # the media was accepted but is still processing.
-MEDIA_ID=$(masto_upload_media "$ENTRY" "$ALT_TEXT") \
-    || exit_error "Video could not be uploaded to Mastodon: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
-
-# Wait for the video to finish processing before attaching it to a status
-masto_await_media "$MEDIA_ID" \
-    || exit_error "Mastodon never finished processing the video: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
-
-# Send the message to Mastodon
-masto_post_status "$POST_TEXT" "$MEDIA_ID" > /dev/null \
-    || exit_error "Posting message to Mastodon failed: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
-
-log_info "posted to mastodon media_id=${MEDIA_ID}"
+if MEDIA_ID=$(masto_upload_media "$ENTRY" "$ALT_TEXT"); then
+    if masto_await_media "$MEDIA_ID"; then
+        if masto_post_status "$POST_TEXT" "$MEDIA_ID" > /dev/null; then
+            log_info "posted to mastodon media_id=${MEDIA_ID}"
+            MASTODON_OK="yes"
+        else
+            log_error "Posting message to Mastodon failed: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
+        fi
+    else
+        log_error "Mastodon never finished processing the video: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
+    fi
+else
+    log_error "Video could not be uploaded to Mastodon: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
+fi
 
 # Login to Bluesky to get session token
-SESSION_JSON=$(bsky_create_session "$BLUESKY_HANDLE" "$BLUESKY_APP_PASSWORD") \
-    || exit_error "Bluesky login failed: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
+if SESSION_JSON=$(bsky_create_session "$BLUESKY_HANDLE" "$BLUESKY_APP_PASSWORD"); then
+    ACCESS_JWT=$(bsky_access_jwt "$SESSION_JSON")
 
-ACCESS_JWT=$(bsky_access_jwt "$SESSION_JSON")
+    # The repo is the account's DID, which is not always the same as the handle
+    BLUESKY_DID=$(bsky_did "$SESSION_JSON")
+    if [ -z "$BLUESKY_DID" ]; then
+        log_error "Bluesky login didn’t return a DID: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
+    else
+        # Video uploads need a service auth token rather than the ordinary
+        # session token, and its audience has to be the account's own PDS
+        # rather than the video host. The PDS comes out of the session
+        # response, which already carries the DID document -- this used to be
+        # a second request to plc.directory for a document already in hand.
+        if ! PDS_HOST=$(bsky_pds_host_from_session "$SESSION_JSON"); then
+            log_error "Could not resolve the Bluesky PDS host."
+        # The lexicon method is uploadBlob, even though the call goes to
+        # uploadVideo
+        elif ! SERVICE_JWT=$(bsky_service_auth "$ACCESS_JWT" "did:web:${PDS_HOST}" \
+            "com.atproto.repo.uploadBlob"); then
+            log_error "Could not get a Bluesky service token: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
+        # Upload the video to Bluesky, which queues a transcoding job rather
+        # than returning a blob directly
+        elif ! JOB_ID=$(bsky_upload_video "$BLUESKY_DID" "$SERVICE_JWT" "$ENTRY" "$ENTRY"); then
+            log_error "Video upload to Bluesky failed: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
+        # Wait for transcoding to finish, which yields the blob to embed
+        elif ! VIDEO_BLOB=$(bsky_await_video "$JOB_ID"); then
+            log_error "Bluesky never finished processing the video: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
+        elif [ -z "$VIDEO_BLOB" ] || [ "$VIDEO_BLOB" = "null" ]; then
+            log_error "Bluesky returned an empty video blob."
+        else
+            # Prepare the record. The library handles transport; what to say
+            # stays here, since the embed differs from bot to bot.
+            RECORD=$(jq -n \
+                --arg created_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+                --arg text "$POST_TEXT" \
+                --arg alt "$ALT_TEXT" \
+                --argjson video "$VIDEO_BLOB" \
+                --argjson width "$VIDEO_WIDTH" \
+                --argjson height "$VIDEO_HEIGHT" \
+                '{
+                    "$type": "app.bsky.feed.post",
+                    text: $text,
+                    createdAt: $created_at,
+                    embed: {
+                        "$type": "app.bsky.embed.video",
+                        video: $video,
+                        alt: $alt,
+                        aspectRatio: { width: $width, height: $height }
+                    }
+                }')
 
-# The repo is the account's DID, which is not always the same as the handle
-BLUESKY_DID=$(bsky_did "$SESSION_JSON")
-if [ -z "$BLUESKY_DID" ]; then
-    exit_error "Bluesky login didn’t return a DID: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
+            # Post the status to Bluesky, with the uploaded video
+            if BLUESKY_RESPONSE=$(bsky_create_record "$BLUESKY_DID" "$ACCESS_JWT" "$RECORD"); then
+                log_info "posted to bluesky uri=$(printf '%s' "$BLUESKY_RESPONSE" | jq -r '.uri // empty')"
+                BLUESKY_OK="yes"
+            else
+                log_error "Bluesky post failed: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
+            fi
+        fi
+    fi
+else
+    log_error "Bluesky login failed: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
 fi
 
-# Video uploads need a service auth token rather than the ordinary session
-# token, and its audience has to be the account's own PDS rather than the video
-# host. The PDS comes out of the session response, which already carries the
-# DID document -- this used to be a second request to plc.directory for a
-# document already in hand.
-PDS_HOST=$(bsky_pds_host_from_session "$SESSION_JSON") \
-    || exit_error "Could not resolve the Bluesky PDS host."
-
-# The lexicon method is uploadBlob, even though the call goes to uploadVideo
-SERVICE_JWT=$(bsky_service_auth "$ACCESS_JWT" "did:web:${PDS_HOST}" \
-    "com.atproto.repo.uploadBlob") \
-    || exit_error "Could not get a Bluesky service token: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
-
-# Upload the video to Bluesky, which queues a transcoding job rather than
-# returning a blob directly
-JOB_ID=$(bsky_upload_video "$BLUESKY_DID" "$SERVICE_JWT" "$ENTRY" "$ENTRY") \
-    || exit_error "Video upload to Bluesky failed: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
-
-# Wait for transcoding to finish, which yields the blob to embed
-VIDEO_BLOB=$(bsky_await_video "$JOB_ID") \
-    || exit_error "Bluesky never finished processing the video: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
-
-if [ -z "$VIDEO_BLOB" ] || [ "$VIDEO_BLOB" = "null" ]; then
-    exit_error "Bluesky returned an empty video blob."
+# Retire the clip on any success, so a platform that already has it is not
+# handed it again next run. A clip that only reached one platform this run
+# gets no automatic retry on the other -- see docs/RESILIENCE.md.
+if [ "$MASTODON_OK" = "yes" ] || [ "$BLUESKY_OK" = "yes" ]; then
+    add_to_history
 fi
 
-# Prepare the record. The library handles transport; what to say stays here,
-# since the embed differs from bot to bot.
-RECORD=$(jq -n \
-    --arg created_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-    --arg text "$POST_TEXT" \
-    --arg alt "$ALT_TEXT" \
-    --argjson video "$VIDEO_BLOB" \
-    --argjson width "$VIDEO_WIDTH" \
-    --argjson height "$VIDEO_HEIGHT" \
-    '{
-        "$type": "app.bsky.feed.post",
-        text: $text,
-        createdAt: $created_at,
-        embed: {
-            "$type": "app.bsky.embed.video",
-            video: $video,
-            alt: $alt,
-            aspectRatio: { width: $width, height: $height }
-        }
-    }')
-
-# Post the status to Bluesky, with the uploaded video
-BLUESKY_RESPONSE=$(bsky_create_record "$BLUESKY_DID" "$ACCESS_JWT" "$RECORD") \
-    || exit_error "Bluesky post failed: HTTP ${BOTLIB_LAST_STATUS} ${BOTLIB_LAST_BODY}"
-
-log_info "posted to bluesky uri=$(printf '%s' "$BLUESKY_RESPONSE" | jq -r '.uri // empty')"
-
-# Both posts landed, so retire this clip from rotation
-add_to_history
+if [ "$MASTODON_OK" = "no" ] || [ "$BLUESKY_OK" = "no" ]; then
+    exit_error "Posting failed: mastodon=${MASTODON_OK} bluesky=${BLUESKY_OK}"
+fi
